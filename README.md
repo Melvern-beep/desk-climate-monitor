@@ -31,6 +31,10 @@ Both devices share the I2C bus.
 
 **SRAM budget.** The ATmega328P has 2048 bytes of SRAM. A full SSD1306 framebuffer is 1024 bytes - half the total.
 
+## Troubleshooting
+
+Upload fails with stk500_recv(): not in sync on the default processor setting. This CH340 clone requires Tools > Processor > ATmega328P (Old Bootloader).
+
 ## Milestones
 
 - [x] 1. Toolchain, non-blocking blink
