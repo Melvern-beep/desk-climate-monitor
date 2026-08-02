@@ -2,7 +2,7 @@
 
 A desk monitor that displays temperature and humidity built on an Arduino Nano. Reads an SHT31-DIS sensor over I2C and shows live readings on a 128x64 OLED. Written in Arduino C++.
 
-**Status:** In progress - milestone 2 of 4 complete.
+**Status:** In progress - milestone 3 of 4 complete.
 
 ## Hardware
 
@@ -17,17 +17,57 @@ A desk monitor that displays temperature and humidity built on an Arduino Nano. 
  - Arduino IDE 2.x
  - CH340 USB-serial driver
  - U8g2 by oliver, v2.36.19
+ - Adafruit SHT31 library (with Adafruit BusIO, Adafruit Unified Sensor)
 
 ## Wiring
 
-Both devices share the I2C bus. Everything runs at 3.3V.
+Both devices share the I2C bus. Everything runs at 3.3V, distributed via the
+breadboard power rails.
+
+### SSD1306 OLED (4-pin)
 
 | Device pin | Nano pin |
 |---|---|
-| VIN / VCC | 3V3 |
+| VCC | 3V3 |
 | GND | GND |
 | SDA | A4 |
 | SCL | A5 |
+
+### SHT31-DIS module (2x3 header)
+ 
+| Pin | Name | Nano pin |
+|---|---|---|
+| 1 | NRESET | 3V3 |
+| 2 | SDA | A4 |
+| 3 | SCL | A5 |
+| 4 | NC | — |
+| 5 | GND | GND |
+| 6 | VCC | 3V3 |
+
+Three things about this module are not obvious and are not printed on the board.
+ 
+The pin numbering zigzags across the two columns rather than running along the
+board edge — 1, 2, 3 down one column and 4, 5, 6 down the other. Check each pin
+against the manufacturer's diagram rather than counting along the header.
+ 
+The 2x3 header cannot be plugged into a breadboard directly. The two columns sit
+0.1" apart, so both land in the same breadboard row, which would short pin 2 (SDA)
+to pin 5 (GND) and pin 3 (SCL) to pin 6 (VCC). No orientation avoids this; the
+0.3" centre channel is too wide to straddle with 0.1" pins. Connect with
+female-to-male jumpers so the module never touches the breadboard.
+ 
+ADDR is not broken out on this module (confirmed with the seller), so the address
+is fixed at 0x44 and cannot be changed. Two of these sensors therefore cannot share
+one hardware I2C bus. The planned two-sensor cross-validation will need a software
+I2C bus on two spare digital pins, or power gating so only one sensor is awake at a
+time.
+ 
+NRESET is tied to VCC rather than left unconnected. The pin is internally pulled up
+and active low, so floating is nominally safe, but the datasheet recommends tying it
+to VDD when unused (§3.6) and an unconnected breadboard wire is a good antenna for
+spurious resets.
+
+### Power and levels
 
 The OLED module has no onboard voltage regulator — inspection of the back of the
 board found only two-terminal passives, no SOT-23 package near VCC. VCC therefore
@@ -62,13 +102,26 @@ would need level shifting to coexist with 5V logic. The SHT3x family runs 2.4–
 which left the choice of supply rail open rather than forcing it.
  
 **Non-blocking timing.** All timing uses `millis()` rather than `delay()`.
-`delay()` halts the entire chip, making concurrent operations impossible. The
-current firmware runs two independent timed tasks (display refresh and status LED),
-each with its own last-fired timestamp and interval. Adding a third task requires
-only another timestamp — no restructuring. This matters because the planned
-follow-up build needs simultaneous shot timing, load cell reads, and display
-updates.
-
+`delay()` halts the entire chip, making concurrent operations impossible. Each timed
+task carries its own last-fired timestamp and interval constant, and the tasks do not
+reference each other — nesting one inside another's `if` block couples their periods
+and produces timing that only works when the intervals happen to divide evenly.
+Adding a task requires only another timestamp, no restructuring. This matters because
+the planned follow-up build needs simultaneous shot timing, load cell reads, and
+display updates.
+ 
+**Sensor reads block.** `Adafruit_SHT31::readTemperature()` blocks for the full
+measurement duration — up to 15 ms at high repeatability. This is acceptable at a
+1 Hz read rate but incompatible with the follow-up build. The alternatives are the
+sensor's periodic acquisition mode (datasheet §4.5), where the sensor measures on its
+own schedule and the master fetches the last result, or raw `Wire` transactions with
+a self-managed wait between command and read.
+ 
+**Failed reads return NaN.** The library signals a failed measurement by returning
+NaN rather than by an error code, and NaN propagates silently through arithmetic.
+Readings are initialised to `NAN` at startup and guarded with `isnan()` before use,
+so a value is never displayed unless it came from a successful measurement.
+ 
 **SRAM budget.** The ATmega328P has 2048 bytes of SRAM. A full SSD1306 framebuffer
 is 1024 bytes — half the total. This firmware uses the `_1_` page-buffer constructor
 (`U8G2_SSD1306_128X64_NONAME_1_HW_I2C`), which holds one 128-byte page at a time
@@ -102,11 +155,16 @@ any text drawing; with no font set, U8g2 draws nothing and reports no error. Als
 check the y-coordinate: `drawStr()` positions text by its baseline, not its top
 edge, so y=0 draws entirely above the visible area.
 
+**Readings look plausible but may be stale.** A stuck read and a working sensor both
+print floats. Breathe gently on the sensor from a few centimetres away — humidity
+should rise within a second or two and decay back over 10–20 seconds. Response to a
+change is the proof, not the value itself.
+
 ## Milestones
 
 - [x] 1. Toolchain, non-blocking blink
 - [x] 2. OLED "Hello World!"
-- [ ] 3. Read SHT31 over serial
+- [x] 3. Read SHT31 over serial
 - [ ] 4. Live readings on display
 
 ## Repository layout
@@ -115,3 +173,4 @@ edge, so y=0 draws entirely above the visible area.
       blink_baseline/    unmodified Arduino Blink, compile baseline
       blink_millis/      non-blocking blink using millis()
       oled_helloworld/   OLED text output, two independent millis() timers
+      sht31_serial/      SHT31 readings to serial, 1 Hz, NaN-guarded
