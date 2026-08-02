@@ -2,7 +2,7 @@
 
 A desk monitor that displays temperature and humidity built on an Arduino Nano. Reads an SHT31-DIS sensor over I2C and shows live readings on a 128x64 OLED. Written in Arduino C++.
 
-**Status:** In progress - milestone 3 of 4 complete.
+**Status:** COMPLETE
 
 ## Hardware
 
@@ -121,6 +121,22 @@ a self-managed wait between command and read.
 NaN rather than by an error code, and NaN propagates silently through arithmetic.
 Readings are initialised to `NAN` at startup and guarded with `isnan()` before use,
 so a value is never displayed unless it came from a successful measurement.
+
+**Float to text.** `u8g2.drawStr()` takes a `const char*`, so readings are converted
+with `dtostrf(value, width, precision, buffer)` before they can be drawn. `dtostrf`
+writes into a caller-supplied `char` array with no bounds checking, so the buffer must
+be sized for the worst case — sign, digits, decimal point, decimal places, and the
+terminating null — or it writes past the end into adjacent memory.
+
+Temperature and humidity get separate buffers rather than one reused. With a single
+buffer, both conversions would run before either value is drawn, and the second would
+overwrite the first — the temperature line would display the humidity reading. The
+alternative, interleaving conversion and drawing, would put `dtostrf` calls inside the
+page loop, where side effects don't belong.
+
+The buffers are global for the same reason the readings are: the sensor block writes
+them and the display block reads them, on independent schedules. A buffer scoped
+inside `loop()` would be destroyed between the two.
  
 **SRAM budget.** The ATmega328P has 2048 bytes of SRAM. A full SSD1306 framebuffer
 is 1024 bytes — half the total. This firmware uses the `_1_` page-buffer constructor
@@ -165,12 +181,13 @@ change is the proof, not the value itself.
 - [x] 1. Toolchain, non-blocking blink
 - [x] 2. OLED "Hello World!"
 - [x] 3. Read SHT31 over serial
-- [ ] 4. Live readings on display
+- [x] 4. Live readings on display
 
 ## Repository layout
 
     firmware/
-      blink_baseline/    unmodified Arduino Blink, compile baseline
-      blink_millis/      non-blocking blink using millis()
-      oled_helloworld/   OLED text output, two independent millis() timers
-      sht31_serial/      SHT31 readings to serial, 1 Hz, NaN-guarded
+      blink_baseline/       unmodified Arduino Blink, compile baseline
+      blink_millis/         non-blocking blink using millis()
+      oled_helloworld/      OLED text output, two independent millis() timers
+      sht31_serial/         SHT31 readings to serial, 1 Hz, NaN-guarded
+      desk-climate-monitor/ combined sensor and display, two independent timers
